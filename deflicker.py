@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from multiprocessing import Process
+from multiprocessing import Process,cpu_count
+import Queue, time,os
 
 """
 Get a list of raw files ending with ext
@@ -12,20 +13,13 @@ def get_raws(ext):
         if file.endswith("."+ext):
             files.append(file)
     return files
-"""
-Convert specific file to linear 16bit tiff
-using dcraw
-"""
-def convert_file(filename):
-    import os
-    command = "dcraw -6 -W -g 1 1 -d -T -c "+ filename +" > /tmp/"+filename+".tiff"
-    os.system(command)
 
+ 
 """
 get the exposure value for specific percentile
 filter can be used to mask part of image
 """
-def find_percentile(file, percentile = 0.5, filter=None):
+def find_exp(file, percentile = 0.5, filter=None):
     import os
     from math import log
     import numpy as np
@@ -43,17 +37,12 @@ def find_percentile(file, percentile = 0.5, filter=None):
 
     hist = np.histogram(img, bins=range(65536))[0]
     
-    running_sum = 0
-
-    for (i, pcount) in enumerate(hist[1:]):
-        running_sum += pcount
-        if float(running_sum)/float(total_size) > percentile:
-            break
-
-    i += 1
+    cum_sum = np.cumsum(hist[1:])/float(total_size)
     
-    os.remove(fname)
-    return log(i,2)-16
+    cum_sum = np.abs(cum_sum - percentile)
+
+    
+    return log(np.argmin(cum_sum)+1,2)-16
 
 """
 get image filter
@@ -86,11 +75,11 @@ def write_xmp(filename, expo, desired):
     f.write('    xmlns:dc="http://purl.org/dc/elements/1.1/"\n')
     f.write('    xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"\n')
     f.write('    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"\n')
-    f.write('   photoshop:DateCreated="2050-01-01T00:00:00:00"\n')
-    f.write('   photoshop:EmbeddedXMPDigest=""\n')
-    f.write('   crs:ProcessVersion="6.7"\n')
-    f.write('   crs:Exposure2012="%f.4">\n' % (desired-expo))
-    f.write('   <dc:subject>\n')
+    f.write('    photoshop:DateCreated="2050-01-01T00:00:00:00"\n')
+    f.write('    photoshop:EmbeddedXMPDigest=""\n')
+    f.write('    crs:ProcessVersion="6.7"\n')
+    f.write('    crs:Exposure2012="%f.4">\n' % (desired-expo))
+    f.write('    <dc:subject>\n')
     f.write('    <rdf:Bag>\n')
     f.write('     <rdf:li>pyLapse Deflicker</rdf:li>\n')
     f.write('    </rdf:Bag>\n')
@@ -103,23 +92,84 @@ def write_xmp(filename, expo, desired):
 
 """
 Worker class for threading
+!multi-threading doesn't seem to help much here
+!disk write has a bottleneck
+!just normalloop instead
 """
 class Worker(Process):
-    def __init__(self, queue):
+    def __init__(self, queue, filter, percentile, expval):
         super(Worker, self).__init__()
         self.queue= queue
+        self.filter = filter
+        self.percentile = percentile
+        self.expval = expval
 
     def run(self):
-        print 'Worker started'
-        # do some initialization here
+        import os
+        print "worker started"
+        for fname in iter(self.queue.get, None ):
+            print fname
+            tiffname = "/tmp/"+fname+".tiff"
+            command = "dcraw -6 -W -g 1 1 -d -T -c "+ fname +" > " + tiffname
+            os.system(command)
 
-        print 'Computing things!'
-        for data in iter( self.queue.get, None ):
-            # Use data
+            exp = find_exp(fname,
+                           percentile=self.percentile,
+                           filter = self.filter)
+            write_xmp(fname, exp, self.expval)
+
+            os.remove(tiffname)
+
+extension = raw_input("Please enter raw extension\ndefault CR2\n   ").strip()
+if len(extension) < 1:
+    extension = "CR2"
+print(">>Using *."+extension)
+
+target_exp = raw_input("Please target EV\ndefault -3 \n0 is overexposure\n   ").strip()
+if len(target_exp) <1:
+    target_exp = -3
+target_exp = float(target_exp)
+print(">>Using " + str(target_exp) + " EV")
+
+
+percentile = raw_input("Please target percentile\ndefault 50 \ni.e. midtones \n   ").strip()
+if len(percentile) <1:
+    percentile = 50
+percentile = float(percentile)/100
+print(">>Using " + str(percentile) + " percentile")
 
 
 
 filter = get_filter()
-filename = get_raws("CR2")[0]
-convert_file(filename)
-write_xmp(filename, find_percentile(filename,filter = filter), -3)
+filenames = get_raws(extension)
+#print filenames
+
+
+
+for fname in filenames:
+    print "working with " + fname
+    tiffname = "/tmp/"+fname+".tiff"
+    command = "dcraw -6 -W -g 1 1 -d -T -c "+ fname +" > " + tiffname
+    os.system(command)
+    
+    exp = find_exp(fname,
+                   percentile=percentile,
+                   filter = filter)
+    write_xmp(fname, exp, target_exp)
+    
+    os.remove(tiffname)
+            
+"""
+nworker = cpu_count()
+request_queue = Queue.Queue()
+worker_list = []
+
+for fname in filenames:
+    request_queue.put( fname )
+for i in range(nworker):
+    request_queue.put( None ) 
+for i in range(nworker):
+    Worker(request_queue,filter,percentile, target_exp).start()
+    time.sleep(2.0)
+
+"""
