@@ -78,7 +78,7 @@ def write_xmp(filename, expo, desired):
     f.write('    photoshop:DateCreated="2050-01-01T00:00:00:00"\n')
     f.write('    photoshop:EmbeddedXMPDigest=""\n')
     f.write('    crs:ProcessVersion="6.7"\n')
-    f.write('    crs:Exposure2012="%f.4">\n' % (desired-expo))
+    f.write('    crs:Exposure2012="%.4f">\n' % (desired-expo))
     f.write('    <dc:subject>\n')
     f.write('    <rdf:Bag>\n')
     f.write('     <rdf:li>pyLapse Deflicker</rdf:li>\n')
@@ -141,6 +141,8 @@ print(">>Using " + str(percentile) + " percentile")
 
 
 filter = get_filter()
+if not filter==None:
+    print ">>Using filter.tiff"
 filenames = get_raws(extension)
 #print filenames
 
@@ -160,6 +162,8 @@ for fname in filenames:
     os.remove(tiffname)
             
 """
+old multi-thread stuff
+
 nworker = cpu_count()
 request_queue = Queue.Queue()
 worker_list = []
