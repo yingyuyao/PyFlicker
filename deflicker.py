@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 from multiprocessing import Process,cpu_count
-import Queue, time,os
+import Queue, time, os, subprocess, shlex, StringIO
 
 """
 Get a list of raw files ending with ext
@@ -19,16 +19,13 @@ def get_raws(ext):
 get the exposure value for specific percentile
 filter can be used to mask part of image
 """
-def find_exp(file, percentile = 0.5, filter=None):
+def find_exp(imgf, percentile = 0.5, filter=None):
     import os
     from math import log
     import numpy as np
     import matplotlib.pyplot as plt
-    fname = file
-    if not file.endswith(".tiff"):
-        fname = file + ".tiff"
-    fname = "/tmp/"+fname
-    img = plt.imread(fname).flatten()
+    
+    img = plt.imread(imgf, format='tiff').flatten()
     total_size = len(img)
     if filter != None:
         filter = filter.flatten()
@@ -150,16 +147,15 @@ filenames = get_raws(extension)
 
 for fname in filenames:
     print "working with " + fname
-    tiffname = "/tmp/"+fname+".tiff"
-    command = "dcraw -6 -W -g 1 1 -d -T -c "+ fname +" > " + tiffname
-    os.system(command)
+    command = "dcraw -6 -W -g 1 1 -d -T -c " + fname
+    p1 = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
+    imgbr = p1.communicate()[0]
+    imgf = StringIO.StringIO(imgbr)
     
-    exp = find_exp(fname,
+    exp = find_exp(imgf,
                    percentile=percentile,
                    filter = filter)
     write_xmp(fname, exp, target_exp)
-    
-    os.remove(tiffname)
             
 """
 old multi-thread stuff
