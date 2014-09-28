@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-from multiprocessing import Process,cpu_count
-import Queue, time, os, subprocess, shlex, StringIO
+from multiprocessing import cpu_count
+import Queue, time, os, subprocess, shlex, StringIO, threading
 
 """
 Get a list of raw files ending with ext
@@ -87,36 +87,25 @@ def write_xmp(filename, expo, desired):
 
 
 
-"""
-Worker class for threading
-!multi-threading doesn't seem to help much here
-!disk write has a bottleneck
-!just normalloop instead
-"""
-class Worker(Process):
-    def __init__(self, queue, filter, percentile, expval):
-        super(Worker, self).__init__()
-        self.queue= queue
-        self.filter = filter
-        self.percentile = percentile
-        self.expval = expval
 
-    def run(self):
-        import os
-        print "worker started"
-        for fname in iter(self.queue.get, None ):
-            print fname
-            tiffname = "/tmp/"+fname+".tiff"
-            command = "dcraw -6 -W -g 1 1 -d -T -c "+ fname +" > " + tiffname
-            os.system(command)
+#Worker for threading
 
-            exp = find_exp(fname,
-                           percentile=self.percentile,
-                           filter = self.filter)
-            write_xmp(fname, exp, self.expval)
 
-            os.remove(tiffname)
-
+def worker():
+    while True:
+        rawname = request_queue.get()
+        print "working with " + rawname
+        command = ['dcraw', '-6', '-W', '-g', '1', '1', '-d', '-T', '-c', rawname]
+        p1 = subprocess.Popen(command, stdout=subprocess.PIPE)
+        imgbr = p1.communicate()[0]
+        imgf = StringIO.StringIO(imgbr)
+        
+        exp = find_exp(imgf,
+                       percentile=percentile,
+                       filter = filter)
+        write_xmp(rawname, exp, target_exp)
+        request_queue.task_done()
+            
 extension = raw_input("Please enter raw extension\ndefault CR2\n   ").strip()
 if len(extension) < 1:
     extension = "CR2"
@@ -139,37 +128,30 @@ print(">>Using " + str(percentile) + " percentile")
 
 filter = get_filter()
 if not filter==None:
-    print ">>Using filter.tiff"
+    print(">>Using filter.tiff")
 filenames = get_raws(extension)
 #print filenames
 
-
-
-for fname in filenames:
-    print "working with " + fname
-    command = "dcraw -6 -W -g 1 1 -d -T -c " + fname
-    p1 = subprocess.Popen(shlex.split(command), stdout=subprocess.PIPE)
-    imgbr = p1.communicate()[0]
-    imgf = StringIO.StringIO(imgbr)
-    
-    exp = find_exp(imgf,
-                   percentile=percentile,
-                   filter = filter)
-    write_xmp(fname, exp, target_exp)
-            
-"""
-old multi-thread stuff
 
 nworker = cpu_count()
 request_queue = Queue.Queue()
 worker_list = []
 
+for i in range(nworker):
+    t = threading.Thread(target=worker)
+    t.daemon = True
+    t.start()
+    
+stime = time.clock()
+
 for fname in filenames:
     request_queue.put( fname )
-for i in range(nworker):
-    request_queue.put( None ) 
-for i in range(nworker):
-    Worker(request_queue,filter,percentile, target_exp).start()
-    time.sleep(2.0)
 
-"""
+    
+request_queue.join()
+
+ftime = time.clock()
+
+print("Spent a total of %.2f seconds on processing" % float(ftime-stime))
+print("An average of %.4f sec per image(total of %d)" % (float(ftime-stime)/len(filenames),len(filenames)))
+
