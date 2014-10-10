@@ -7,10 +7,11 @@ import Queue, time, os, subprocess, shlex, StringIO, threading
 Get a list of raw files ending with ext
 """
 def get_raws(ext):
+    ext = ext.lower()
     import os
     files = []
     for file in os.listdir("."):
-        if file.endswith("."+ext):
+        if file.lower().endswith("."+ext):
             files.append(file)
     return files
 
@@ -72,7 +73,7 @@ def write_xmp(filename, expo, desired):
     f.write('    xmlns:dc="http://purl.org/dc/elements/1.1/"\n')
     f.write('    xmlns:photoshop="http://ns.adobe.com/photoshop/1.0/"\n')
     f.write('    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"\n')
-    f.write('    photoshop:DateCreated="2050-01-01T00:00:00:00"\n')
+    f.write('    photoshop:DateCreated="2100-01-01T00:00:00:00"\n')
     f.write('    photoshop:EmbeddedXMPDigest=""\n')
     f.write('    crs:ProcessVersion="6.7"\n')
     f.write('    crs:Exposure2012="%.4f">\n' % (desired-expo))
@@ -84,6 +85,7 @@ def write_xmp(filename, expo, desired):
     f.write('  </rdf:Description>\n')
     f.write(' </rdf:RDF>\n')
     f.write('</x:xmpmeta>\n')
+    return fname
 
 
 
@@ -102,8 +104,13 @@ def worker():
         
         exp = find_exp(imgf,
                        percentile=percentile,
-                       filter = filter)
-        write_xmp(rawname, exp, target_exp)
+                       filter = myfilter)
+        xmpname = write_xmp(rawname, exp, target_exp)
+        if rawname.lower().endswith(".dng"):
+            command = ['exiftool','-overwrite_original','-tagsfromfile', xmpname, '-all:all', rawname]
+            with open(os.devnull, "w") as f:
+                subprocess.call(command, stdout = f)
+            
         request_queue.task_done()
             
 extension = raw_input("Please enter raw extension\ndefault CR2\n   ").strip()
@@ -126,8 +133,8 @@ print(">>Using " + str(percentile) + " percentile")
 
 
 
-filter = get_filter()
-if not filter==None:
+myfilter = get_filter()
+if myfilter is not None:
     print(">>Using filter.tiff")
 filenames = get_raws(extension)
 #print filenames
@@ -151,7 +158,9 @@ for fname in filenames:
 request_queue.join()
 
 ftime = time.clock()
-
-print("Spent a total of %.2f seconds on processing" % float(ftime-stime))
-print("An average of %.4f sec per image(total of %d)" % (float(ftime-stime)/len(filenames),len(filenames)))
+if filenames:
+    print("Spent a total of %.2f seconds on processing" % float(ftime-stime))
+    print("An average of %.4f sec per image(total of %d)" % (float(ftime-stime)/len(filenames),len(filenames)))
+else:
+    print("Did not found any matching file!!")
 
